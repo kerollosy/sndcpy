@@ -2,38 +2,59 @@ import subprocess
 import socket
 import time
 import pyaudio
+import os
+import sys
 
-print("Installing sndcpy")
-subprocess.run(["adb", "install", "-t", "-r", "-g", "sndcpy.apk"])
+def main():
+    apk_path = "sndcpy.apk"
+    port = 28200
+    
+    if len(sys.argv) > 1:
+        apk_path = sys.argv[1]
+    
+    if not os.path.exists(apk_path):
+        print(f"Error: APK not found at {apk_path}")
+        sys.exit(1)
+    
+    print(f"Installing {apk_path}")
+    subprocess.run(["adb", "install", "-t", "-r", "-g", apk_path])
+    
+    print("Granting permissions")
+    subprocess.run(["adb", "shell", "appops", "set", "com.rom1v.sndcpy", "PROJECT_MEDIA", "allow"])
+    
+    print(f"Forwarding port {port}")
+    subprocess.run(["adb", "forward", f"tcp:{port}", "localabstract:sndcpy"])
+    
+    print("Starting sndcpy")
+    subprocess.run(["adb", "shell", "am", "start", "com.rom1v.sndcpy/.MainActivity"])
+    
+    time.sleep(3)
+    
+    print("Connecting to sndcpy")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.connect(("127.0.0.1", port))
+        print("Connected to audio stream")
+    except socket.error as e:
+        print(f"Connection failed: {e}")
+        sys.exit(1)
+    
+    pa = pyaudio.PyAudio()
+    audio_stream = pa.open(
+        format=pyaudio.paInt16,
+        channels=2,
+        rate=48000,
+        output=True,
+        frames_per_buffer=1024
+    )
+    
+    print("Streaming audio...")
+    while True:
+        audio_data = sock.recv(4096)
+        if not audio_data:
+            print("Connection closed by device")
+            break
+        audio_stream.write(audio_data)
 
-print("Granting permissions")
-result = subprocess.run(["adb", "shell", "appops", "set", "com.rom1v.sndcpy", "PROJECT_MEDIA", "allow"])
-
-print("Forwarding port")
-subprocess.run(["adb", "forward", "tcp:28200", "localabstract:sndcpy"])
-
-print("Starting sndcpy")
-subprocess.run(["adb", "shell", "am", "start", "com.rom1v.sndcpy/.MainActivity"])
-
-time.sleep(3)
-
-print("Connecting to sndcpy")
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.settimeout(3)
-sock.connect(("127.0.0.1", 28200))
-print("Connected to audio stream")
-
-
-pa = pyaudio.PyAudio()
-
-audio_stream = pa.open(
-    format=pyaudio.paInt16,
-    channels=2,
-    rate=48000,
-    output=True,
-    frames_per_buffer=1024
-)
-
-while True:
-    audio_data = sock.recv(4096)
-    audio_stream.write(audio_data)
+if __name__ == "__main__":
+    main()
