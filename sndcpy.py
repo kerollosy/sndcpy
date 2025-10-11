@@ -1,190 +1,267 @@
+#!/usr/bin/env python3
+"""
+sndcpy - Android Audio Streaming Client
+Stream audio from Android devices to desktop in real-time.
+"""
+
 import subprocess
 import socket
 import time
-import pyaudio
-import os
+import signal
 import sys
 import argparse
 import logging
-import signal
-from colorama import init, Fore, Style
+from pathlib import Path
+from typing import Optional
 
+import pyaudio
+from colorama import init, Fore, Style
 
 init(autoreset=True)
 
-logging.basicConfig(
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    level=logging.INFO
-)
-logger = logging.getLogger("sndcpy")
 
-# Function to get colored log prefix based on level
-def log_prefix(level):
-    if level == "INFO":
-        return f"{Fore.GREEN}{Style.RESET_ALL}"
-    elif level == "DEBUG":
-        return f"{Fore.BLUE}{Style.RESET_ALL}"
-    elif level == "WARNING":
-        return f"{Fore.YELLOW}{Style.RESET_ALL}"
-    elif level == "ERROR":
-        return f"{Fore.RED}{Style.RESET_ALL}"
-    else:
-        return f"[{level}]"
-
-# Override logger methods to add colors while preserving timestamps
-original_info = logger.info
-original_debug = logger.debug
-original_warning = logger.warning
-original_error = logger.error
-
-logger.info = lambda msg, *args, **kwargs: original_info(f"{log_prefix('INFO')} {msg}", *args, **kwargs)
-logger.debug = lambda msg, *args, **kwargs: original_debug(f"{log_prefix('DEBUG')} {msg}", *args, **kwargs)
-logger.warning = lambda msg, *args, **kwargs: original_warning(f"{log_prefix('WARNING')} {msg}", *args, **kwargs)
-logger.error = lambda msg, *args, **kwargs: original_error(f"{log_prefix('ERROR')} {msg}", *args, **kwargs)
-
-audio_stream = None
-pa = None
-sock = None
-
-def signal_handler(sig, frame):
-    """Clean up resources on exit"""
-    logger.info(f"\n{Fore.YELLOW}Shutting down...{Style.RESET_ALL}")
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter for colored log output."""
     
-    global audio_stream, pa, sock
+    COLORS = {
+        'DEBUG': Fore.BLUE,
+        'INFO': Fore.GREEN,
+        'WARNING': Fore.YELLOW,
+        'ERROR': Fore.RED,
+    }
     
-    if audio_stream:
-        audio_stream.stop_stream()
-        audio_stream.close()
-    
-    if pa:
-        pa.terminate()
-    
-    if sock:
-        sock.close()
-    
-    sys.exit(0)
+    def format(self, record):
+        color = self.COLORS.get(record.levelname, '')
+        record.levelname = f"{color}{record.levelname}{Style.RESET_ALL}"
+        return super().format(record)
 
-# Set up signal handler
-signal.signal(signal.SIGINT, signal_handler)
 
-def check_device_connected(adb_cmd):
-    """Check if the device is connected"""
-    try:
-        result = subprocess.run(adb_cmd + ["get-state"], 
-                                capture_output=True, text=True)
-        return "device" in result.stdout
-    except:
-        return False
+class SndcpyClient:
+    """Android audio streaming client using ADB and socket communication."""
+    
+    # Audio configuration
+    AUDIO_FORMAT = pyaudio.paInt16
+    CHANNELS = 2
+    SAMPLE_RATE = 48000
+    BUFFER_SIZE = 4096
+    
+    # App constants
+    PACKAGE_NAME = "com.rom1v.sndcpy"
+    ACTIVITY = f"{PACKAGE_NAME}/.MainActivity"
+    
+    def __init__(self, apk_path: Path, port: int = 28200, device_serial: Optional[str] = None, debug: bool = False):
+        """
+        Initialize the sndcpy client.
+        
+        Args:
+            apk_path: Path to sndcpy APK file
+            port: Local port for audio forwarding
+            device_serial: Optional device serial for multiple devices
+            debug: Enable debug logging
+        """
+        self.apk_path = apk_path
+        self.port = port
+        self.device_serial = device_serial
+        
+        # Setup logging
+        self.logger = logging.getLogger("sndcpy")
+        self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
+        
+        handler = logging.StreamHandler()
+        handler.setFormatter(ColoredFormatter(
+            fmt='%(asctime)s [%(levelname)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        ))
+        self.logger.addHandler(handler)
+        self.logger.propagate = False
+        
+        # Resources
+        self.socket = None
+        self.pyaudio_instance = None
+        self.audio_stream = None
+        
+        # Build ADB command prefix
+        self.adb_cmd = ["adb"]
+        if device_serial:
+            self.adb_cmd.extend(["-s", device_serial])
+    
+    def run(self):
+        """Execute the complete streaming workflow."""
+        self._check_adb()
+        self._check_device()
+        self._setup_app()
+        self._connect()
+        self._stream()
 
-def check_app_installed(adb_cmd, package_name):
-    """Check if the app is already installed on the device"""
-    try:
+    def _check_adb(self):
+        """Verify ADB is installed and accessible."""
+        self.logger.info("Checking ADB installation...")
+        try:
+            result = subprocess.run(["adb", "version"], capture_output=True, text=True)
+            if result.returncode != 0:
+                raise FileNotFoundError
+            self.logger.debug(f"ADB version: {result.stdout.strip()}")
+        except FileNotFoundError:
+            self.logger.error("ADB not found. Please install ADB and ensure it's in your PATH.")
+            sys.exit(1)
+    
+    def _check_device(self):
+        """Verify device is connected."""
+        self.logger.info("Checking device connection...")
+        result = subprocess.run(self.adb_cmd + ["get-state"], capture_output=True, text=True)
+        
+        if "device" not in result.stdout:
+            self.logger.error("No device connected")
+            sys.exit(1)
+        
+        if self.device_serial:
+            self.logger.info(f"Using device: {self.device_serial}")
+    
+    def _setup_app(self):
+        """Install and configure the sndcpy app."""
+        if not self.apk_path.exists():
+            self.logger.error(f"APK not found: {self.apk_path}")
+            sys.exit(1)
+        
+        # Check if already installed
         result = subprocess.run(
-            adb_cmd + ["shell", "pm", "list", "packages", package_name],
+            self.adb_cmd + ["shell", "pm", "list", "packages", self.PACKAGE_NAME],
             capture_output=True, text=True
         )
-        return package_name in result.stdout
-    except:
-        return False
+        
+        if self.PACKAGE_NAME in result.stdout:
+            self.logger.info("App already installed")
+        else:
+            self.logger.info(f"Installing {self.apk_path.name}...")
+            result = subprocess.run(
+                self.adb_cmd + ["install", "-t", "-r", "-g", str(self.apk_path)],
+                capture_output=True, text=True
+            )
+            self.logger.debug(f"Install output: {result.stdout}")
+        
+        # Monkey patch to grant permission automatically
+        self.logger.info("Granting permissions...")
+        subprocess.run(
+            self.adb_cmd + ["shell", "appops", "set", self.PACKAGE_NAME, "PROJECT_MEDIA", "allow"],
+            capture_output=True
+        )
+        
+        self.logger.info(f"Forwarding port {self.port}...")
+        subprocess.run(
+            self.adb_cmd + ["forward", f"tcp:{self.port}", "localabstract:sndcpy"],
+            capture_output=True
+        )
+        
+        self.logger.info("Starting app...")
+        subprocess.run(
+            self.adb_cmd + ["shell", "am", "start", self.ACTIVITY],
+            capture_output=True
+        )
+
+        self.logger.debug("Waiting 1 second for app startup...")
+        time.sleep(1)  # Wait for app startup
+    
+    def _connect(self):
+        """Connect to the audio stream."""
+        self.logger.info("Connecting to audio stream...")
+        
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            self.socket.connect(("127.0.0.1", self.port))
+            self.logger.info("Connected successfully")
+        except socket.error as e:
+            self.logger.error(f"Connection failed: {e}")
+            sys.exit(1)
+    
+    def _stream(self):
+        """Stream audio from device to desktop."""
+        self.pyaudio_instance = pyaudio.PyAudio()
+        self.audio_stream = self.pyaudio_instance.open(
+            format=self.AUDIO_FORMAT,
+            channels=self.CHANNELS,
+            rate=self.SAMPLE_RATE,
+            output=True
+        )
+        
+        self.logger.info("Streaming audio... Press Ctrl+C to stop")
+        
+        try:
+            while True:
+                data = self.socket.recv(self.BUFFER_SIZE)
+                if not data:
+                    self.logger.info("Connection closed by device")
+                    break
+                self.audio_stream.write(data)
+        except KeyboardInterrupt:
+            self.logger.info("Stopping...")
+        except socket.timeout:
+            self.logger.error("Socket timeout while waiting for data")
+        except socket.error as e:
+            self.logger.error(f"Socket error: {e}")
+        except Exception as e:
+            self.logger.error(f"Error during playback: {e}")
+    
+    def cleanup(self):
+        """Release all resources."""
+        self.logger.info("Cleaning up resources...")
+        if self.audio_stream:
+            self.audio_stream.stop_stream()
+            self.audio_stream.close()
+        if self.pyaudio_instance:
+            self.pyaudio_instance.terminate()
+        if self.socket:
+            self.socket.close()
+
 
 def main():
-    global audio_stream, pa, sock
-    
-    parser = argparse.ArgumentParser(description="Stream audio from Android device")
-    parser.add_argument("apk_path", nargs="?", default="sndcpy.apk", help="Path to sndcpy APK file")
-    parser.add_argument("device", nargs="?", help="Specific device serial number (if multiple devices connected)")
-    parser.add_argument("-p", "--port", type=int, default=28200, help="Local port for forwarding")
-    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug output")
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Stream audio from Android device to desktop"
+    )
+    parser.add_argument(
+        "apk_path",
+        nargs="?",
+        default="sndcpy.apk",
+        help="Path to sndcpy APK file"
+    )
+    parser.add_argument(
+        "-s", "--serial",
+        help="Device serial number (for multiple devices)"
+    )
+    parser.add_argument(
+        "-p", "--port",
+        type=int,
+        default=28200,
+        help="Local port for forwarding (default: 28200)"
+    )
+    parser.add_argument(
+        "-d", "--debug",
+        action="store_true",
+        help="Enable debug logging"
+    )
     
     args = parser.parse_args()
     
-    apk_path = args.apk_path
-    port = args.port
-    device = args.device
-    debug = args.debug
-    
-    if debug:
-        logger.setLevel(logging.DEBUG)
-    
-    adb_cmd = ["adb"]
-    if device:
-        adb_cmd.extend(["-s", device])
-        logger.info(f"{Fore.CYAN}Using device: {device}{Style.RESET_ALL}")
-    
-    # Check if device is connected
-    logger.info(f"{Fore.GREEN}Checking device connection...{Style.RESET_ALL}")
-    if not check_device_connected(adb_cmd):
-        logger.error(f"{Fore.RED}No device connected. Please connect your device and try again.{Style.RESET_ALL}")
-        sys.exit(1)
-    
-    if not os.path.exists(apk_path):
-        logger.error(f"{Fore.RED}Error: APK not found at {apk_path}{Style.RESET_ALL}")
-        sys.exit(1)
-    
-    if check_app_installed(adb_cmd, "com.rom1v.sndcpy"):
-        logger.info(f"{Fore.GREEN}The app is already installed, skipping installation{Style.RESET_ALL}")
-    else:
-        logger.info(f"{Fore.GREEN}Installing {apk_path}{Style.RESET_ALL}")
-        result = subprocess.run(adb_cmd + ["install", "-t", "-r", "-g", apk_path], capture_output=True, text=True)
-        
-        logger.debug(f"Install output: {result.stdout}")
-        if result.stderr:
-            logger.debug(f"Install errors: {result.stderr}")
-
-    # Monkey patch to grant permissions automatically
-    logger.info(f"{Fore.GREEN}Granting permissions{Style.RESET_ALL}")
-    result = subprocess.run(adb_cmd + ["shell", "appops", "set", "com.rom1v.sndcpy", "PROJECT_MEDIA", "allow"], 
-                        capture_output=True, text=True)
-    logger.debug(f"Permission output: {result.stdout}")
-    if result.stderr:
-        logger.debug(f"Permission errors: {result.stderr}")
-    
-    logger.info(f"{Fore.GREEN}Forwarding port {port}{Style.RESET_ALL}")
-    result = subprocess.run(adb_cmd + ["forward", f"tcp:{port}", "localabstract:sndcpy"], 
-                        capture_output=True, text=True)
-    logger.debug(f"Port forwarding output: {result.stdout}")
-    if result.stderr:
-        logger.debug(f"Port forwarding errors: {result.stderr}")
-    
-    logger.info(f"{Fore.GREEN}Starting sndcpy{Style.RESET_ALL}")
-    result = subprocess.run(adb_cmd + ["shell", "am", "start", "com.rom1v.sndcpy/.MainActivity"], 
-                        capture_output=True, text=True)
-    logger.debug(f"App start output: {result.stdout}")
-    if result.stderr:
-        logger.debug(f"App start errors: {result.stderr}")
-
-    logger.debug("Waiting 3 seconds for app startup...")
-    time.sleep(3)
-    
-    logger.info(f"{Fore.GREEN}Connecting to sndcpy{Style.RESET_ALL}")
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect(("127.0.0.1", port))
-        logger.info(f"{Fore.CYAN}Connected to audio stream{Style.RESET_ALL}")
-    except socket.error as e:
-        logger.error(f"{Fore.RED}Connection failed: {e}{Style.RESET_ALL}")
-        sys.exit(1)
-    
-    pa = pyaudio.PyAudio()
-    audio_stream = pa.open(
-        format=pyaudio.paInt16,
-        channels=2,
-        rate=48000,
-        output=True,
-        frames_per_buffer=1024
+    client = SndcpyClient(
+        apk_path=Path(args.apk_path),
+        port=args.port,
+        device_serial=args.serial,
+        debug=args.debug
     )
     
-    logger.info(f"{Fore.CYAN}Streaming audio... Press Ctrl+C to stop{Style.RESET_ALL}")
+    # Setup cleanup on exit
+    def signal_handler(sig, frame):
+        client.cleanup()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     try:
-        while True:
-            audio_data = sock.recv(4096)
-            if not audio_data:
-                logger.info("Connection closed by device")
-                break
-            audio_stream.write(audio_data)
-    except socket.error as e:
-        logger.error(f"{Fore.RED}Socket error: {e}{Style.RESET_ALL}")
+        client.run()
+    finally:
+        client.cleanup()
+
 
 if __name__ == "__main__":
     main()
