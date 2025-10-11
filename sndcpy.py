@@ -77,6 +77,17 @@ def check_device_connected(adb_cmd):
     except:
         return False
 
+def check_app_installed(adb_cmd, package_name):
+    """Check if the app is already installed on the device"""
+    try:
+        result = subprocess.run(
+            adb_cmd + ["shell", "pm", "list", "packages", package_name],
+            capture_output=True, text=True
+        )
+        return package_name in result.stdout
+    except:
+        return False
+
 def main():
     global audio_stream, pa, sock
     
@@ -111,13 +122,16 @@ def main():
         logger.error(f"{Fore.RED}Error: APK not found at {apk_path}{Style.RESET_ALL}")
         sys.exit(1)
     
-    logger.info(f"{Fore.GREEN}Installing {apk_path}{Style.RESET_ALL}")
-    result = subprocess.run(adb_cmd + ["install", "-t", "-r", "-g", apk_path], capture_output=True, text=True)
-    
-    logger.debug(f"Install output: {result.stdout}")
-    if result.stderr:
-        logger.debug(f"Install errors: {result.stderr}")
-    
+    if check_app_installed(adb_cmd, "com.rom1v.sndcpy"):
+        logger.info(f"{Fore.GREEN}The app is already installed, skipping installation{Style.RESET_ALL}")
+    else:
+        logger.info(f"{Fore.GREEN}Installing {apk_path}{Style.RESET_ALL}")
+        result = subprocess.run(adb_cmd + ["install", "-t", "-r", "-g", apk_path], capture_output=True, text=True)
+        
+        logger.debug(f"Install output: {result.stdout}")
+        if result.stderr:
+            logger.debug(f"Install errors: {result.stderr}")
+
     # Monkey patch to grant permissions automatically
     logger.info(f"{Fore.GREEN}Granting permissions{Style.RESET_ALL}")
     result = subprocess.run(adb_cmd + ["shell", "appops", "set", "com.rom1v.sndcpy", "PROJECT_MEDIA", "allow"], 
