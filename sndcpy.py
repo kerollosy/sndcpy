@@ -6,6 +6,7 @@ import os
 import sys
 import argparse
 import logging
+import signal
 from colorama import init, Fore, Style
 
 
@@ -17,8 +18,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sndcpy")
 
+audio_stream = None
+pa = None
+sock = None
+
+def signal_handler(sig, frame):
+    """Clean up resources on exit"""
+    logger.info(f"\n{Fore.YELLOW}Shutting down...{Style.RESET_ALL}")
+    
+    global audio_stream, pa, sock
+    
+    if audio_stream:
+        audio_stream.stop_stream()
+        audio_stream.close()
+    
+    if pa:
+        pa.terminate()
+    
+    if sock:
+        sock.close()
+    
+    sys.exit(0)
+
+# Set up signal handler
+signal.signal(signal.SIGINT, signal_handler)
+
+def check_device_connected(adb_cmd):
+    """Check if the device is connected"""
+    try:
+        result = subprocess.run(adb_cmd + ["get-state"], 
+                                capture_output=True, text=True)
+        return "device" in result.stdout
+    except:
+        return False
 
 def main():
+    global audio_stream, pa, sock
+    
     parser = argparse.ArgumentParser(description="Stream audio from Android device")
     parser.add_argument("apk_path", nargs="?", default="sndcpy.apk", help="Path to sndcpy APK file")
     parser.add_argument("device", nargs="?", help="Specific device serial number (if multiple devices connected)")
@@ -39,6 +75,12 @@ def main():
     if device:
         adb_cmd.extend(["-s", device])
         logger.info(f"{Fore.CYAN}Using device: {device}{Style.RESET_ALL}")
+    
+    # Check if device is connected
+    logger.info(f"{Fore.GREEN}Checking device connection...{Style.RESET_ALL}")
+    if not check_device_connected(adb_cmd):
+        logger.error(f"{Fore.RED}No device connected. Please connect your device and try again.{Style.RESET_ALL}")
+        sys.exit(1)
     
     if not os.path.exists(apk_path):
         logger.error(f"{Fore.RED}Error: APK not found at {apk_path}{Style.RESET_ALL}")
@@ -94,7 +136,7 @@ def main():
         frames_per_buffer=1024
     )
     
-    logger.info(f"{Fore.CYAN}Streaming audio...{Style.RESET_ALL}")
+    logger.info(f"{Fore.CYAN}Streaming audio... Press Ctrl+C to stop{Style.RESET_ALL}")
     try:
         while True:
             audio_data = sock.recv(4096)
@@ -104,18 +146,6 @@ def main():
             audio_stream.write(audio_data)
     except socket.error as e:
         logger.error(f"{Fore.RED}Socket error: {e}{Style.RESET_ALL}")
-    finally:
-        # Basic cleanup
-        logger.debug("Cleaning up resources")
-        if audio_stream:
-            audio_stream.close()
-        if pa:
-            pa.terminate()
-        if sock:
-            sock.close()
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info(f"{Fore.YELLOW}Program terminated by user{Style.RESET_ALL}")
+    main()
