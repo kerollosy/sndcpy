@@ -13,10 +13,35 @@ from colorama import init, Fore, Style
 init(autoreset=True)
 
 logging.basicConfig(
-    format='%(message)s',
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
     level=logging.INFO
 )
 logger = logging.getLogger("sndcpy")
+
+# Function to get colored log prefix based on level
+def log_prefix(level):
+    if level == "INFO":
+        return f"{Fore.GREEN}{Style.RESET_ALL}"
+    elif level == "DEBUG":
+        return f"{Fore.BLUE}{Style.RESET_ALL}"
+    elif level == "WARNING":
+        return f"{Fore.YELLOW}{Style.RESET_ALL}"
+    elif level == "ERROR":
+        return f"{Fore.RED}{Style.RESET_ALL}"
+    else:
+        return f"[{level}]"
+
+# Override logger methods to add colors while preserving timestamps
+original_info = logger.info
+original_debug = logger.debug
+original_warning = logger.warning
+original_error = logger.error
+
+logger.info = lambda msg, *args, **kwargs: original_info(f"{log_prefix('INFO')} {msg}", *args, **kwargs)
+logger.debug = lambda msg, *args, **kwargs: original_debug(f"{log_prefix('DEBUG')} {msg}", *args, **kwargs)
+logger.warning = lambda msg, *args, **kwargs: original_warning(f"{log_prefix('WARNING')} {msg}", *args, **kwargs)
+logger.error = lambda msg, *args, **kwargs: original_error(f"{log_prefix('ERROR')} {msg}", *args, **kwargs)
 
 audio_stream = None
 pa = None
