@@ -121,6 +121,7 @@ class SndcpyClient:
         """Install and configure the sndcpy app."""
         if not self.apk_path.exists():
             self.logger.error(f"APK not found: {self.apk_path}")
+            self.logger.error("Please download sndcpy.apk from https://github.com/rom1v/sndcpy/releases/")
             sys.exit(1)
         
         # Check if already installed
