@@ -8,9 +8,17 @@ import sys
 def main():
     apk_path = "sndcpy.apk"
     port = 28200
+    device = None
     
     if len(sys.argv) > 1:
         apk_path = sys.argv[1]
+    
+    if len(sys.argv) > 2:
+        device = sys.argv[2]
+    
+    adb_cmd = ["adb"]
+    if device:
+        adb_cmd.extend(["-s", device])
     
     if not os.path.exists(apk_path):
         print(f"Error: APK not found at {apk_path}")
@@ -49,12 +57,23 @@ def main():
     )
     
     print("Streaming audio...")
-    while True:
-        audio_data = sock.recv(4096)
-        if not audio_data:
-            print("Connection closed by device")
-            break
-        audio_stream.write(audio_data)
+    try:
+        while True:
+            audio_data = sock.recv(4096)
+            if not audio_data:
+                print("Connection closed by device")
+                break
+            audio_stream.write(audio_data)
+    except socket.error as e:
+        print(f"Socket error: {e}")
+    finally:
+        # Basic cleanup
+        if audio_stream:
+            audio_stream.close()
+        if pa:
+            pa.terminate()
+        if sock:
+            sock.close()
 
 if __name__ == "__main__":
     main()
