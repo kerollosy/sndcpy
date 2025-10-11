@@ -4,37 +4,40 @@ import time
 import pyaudio
 import os
 import sys
+import argparse
 
 def main():
-    apk_path = "sndcpy.apk"
-    port = 28200
-    device = None
+    parser = argparse.ArgumentParser(description="Stream audio from Android device")
+    parser.add_argument("apk_path", nargs="?", default="sndcpy.apk", help="Path to sndcpy APK file")
+    parser.add_argument("device", nargs="?", help="Specific device serial number (if multiple devices connected)")
+    parser.add_argument("-p", "--port", type=int, default=28200, help="Local port for forwarding")
     
-    if len(sys.argv) > 1:
-        apk_path = sys.argv[1]
+    args = parser.parse_args()
     
-    if len(sys.argv) > 2:
-        device = sys.argv[2]
+    apk_path = args.apk_path
+    port = args.port
+    device = args.device
     
     adb_cmd = ["adb"]
     if device:
         adb_cmd.extend(["-s", device])
+        print(f"Using device: {device}")
     
     if not os.path.exists(apk_path):
         print(f"Error: APK not found at {apk_path}")
         sys.exit(1)
     
     print(f"Installing {apk_path}")
-    subprocess.run(["adb", "install", "-t", "-r", "-g", apk_path])
+    subprocess.run(adb_cmd + ["install", "-t", "-r", "-g", apk_path])
     
     print("Granting permissions")
-    subprocess.run(["adb", "shell", "appops", "set", "com.rom1v.sndcpy", "PROJECT_MEDIA", "allow"])
+    subprocess.run(adb_cmd + ["shell", "appops", "set", "com.rom1v.sndcpy", "PROJECT_MEDIA", "allow"])
     
     print(f"Forwarding port {port}")
-    subprocess.run(["adb", "forward", f"tcp:{port}", "localabstract:sndcpy"])
+    subprocess.run(adb_cmd + ["forward", f"tcp:{port}", "localabstract:sndcpy"])
     
     print("Starting sndcpy")
-    subprocess.run(["adb", "shell", "am", "start", "com.rom1v.sndcpy/.MainActivity"])
+    subprocess.run(adb_cmd + ["shell", "am", "start", "com.rom1v.sndcpy/.MainActivity"])
     
     time.sleep(3)
     
