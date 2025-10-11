@@ -51,17 +51,29 @@ def main():
     if result.stderr:
         logger.debug(f"Install errors: {result.stderr}")
     
+    # Monkey patch to grant permissions automatically
     logger.info(f"{Fore.GREEN}Granting permissions{Style.RESET_ALL}")
-    subprocess.run(adb_cmd + ["shell", "appops", "set", "com.rom1v.sndcpy", "PROJECT_MEDIA", "allow"])
+    result = subprocess.run(adb_cmd + ["shell", "appops", "set", "com.rom1v.sndcpy", "PROJECT_MEDIA", "allow"], 
+                        capture_output=True, text=True)
+    logger.debug(f"Permission output: {result.stdout}")
+    if result.stderr:
+        logger.debug(f"Permission errors: {result.stderr}")
     
     logger.info(f"{Fore.GREEN}Forwarding port {port}{Style.RESET_ALL}")
-    subprocess.run(adb_cmd + ["forward", f"tcp:{port}", "localabstract:sndcpy"])
+    result = subprocess.run(adb_cmd + ["forward", f"tcp:{port}", "localabstract:sndcpy"], 
+                        capture_output=True, text=True)
+    logger.debug(f"Port forwarding output: {result.stdout}")
+    if result.stderr:
+        logger.debug(f"Port forwarding errors: {result.stderr}")
     
     logger.info(f"{Fore.GREEN}Starting sndcpy{Style.RESET_ALL}")
-    subprocess.run(adb_cmd + ["shell", "am", "start", "com.rom1v.sndcpy/.MainActivity"])
-    
-    if debug:
-        logger.debug("Waiting 3 seconds for app startup...")
+    result = subprocess.run(adb_cmd + ["shell", "am", "start", "com.rom1v.sndcpy/.MainActivity"], 
+                        capture_output=True, text=True)
+    logger.debug(f"App start output: {result.stdout}")
+    if result.stderr:
+        logger.debug(f"App start errors: {result.stderr}")
+
+    logger.debug("Waiting 3 seconds for app startup...")
     time.sleep(3)
     
     logger.info(f"{Fore.GREEN}Connecting to sndcpy{Style.RESET_ALL}")
