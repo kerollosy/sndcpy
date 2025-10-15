@@ -84,6 +84,8 @@ class SndcpyClient:
         self.adb_cmd = ["adb"]
         if device_serial:
             self.adb_cmd.extend(["-s", device_serial])
+        
+        self.metadata_enabled = False
     
     def run(self):
         """Execute the complete streaming workflow."""
@@ -161,6 +163,12 @@ class SndcpyClient:
 
         self.logger.debug("Waiting 1 second for app startup...")
         time.sleep(1)  # Wait for app startup
+
+        if self._check_notification_permission():
+            self.logger.info(f"{Fore.GREEN}Notification permission already granted{Style.RESET_ALL}")
+            self.metadata_enabled = True
+        else:
+            self._wait_for_notification_permission()
     
     def _connect(self):
         """Connect to the audio stream."""
@@ -201,6 +209,44 @@ class SndcpyClient:
             self.logger.error(f"Socket error: {e}")
         except Exception as e:
             self.logger.error(f"Error during playback: {e}")
+
+    # Add these methods to the SndcpyClient class
+    def _check_notification_permission(self):
+        """Check if notification permission is granted for the app."""
+        self.logger.info("Checking notification permission...")
+        
+        result = subprocess.run(
+            self.adb_cmd + ["shell", "settings", "get", "secure", "enabled_notification_listeners"],
+            capture_output=True, text=True
+        )
+        
+        if self.PACKAGE_NAME in result.stdout:
+            self.logger.debug("Found package in notification listeners")
+            return True
+
+        return False
+
+    def _wait_for_notification_permission(self):
+        """Wait for user to grant notification permission (blocking)."""
+        self.logger.info(f"{Fore.CYAN}Waiting for notification permission (up to 30 seconds)...{Style.RESET_ALL}")
+        self.logger.info(f"{Fore.YELLOW}Please grant notification permission on your device when prompted.{Style.RESET_ALL}")
+        
+        start_time = time.time()
+        max_wait_time = 30  # seconds
+        check_interval = 2  # seconds between checks
+        
+        while time.time() - start_time < max_wait_time:
+            if self._check_notification_permission():
+                self.logger.info(f"{Fore.GREEN}Notification permission granted!{Style.RESET_ALL}")
+                self.metadata_enabled = True
+                return True
+            
+            # Wait before checking again
+            time.sleep(check_interval)
+        
+        # Permission wasn't granted within the time limit
+        self.logger.warning(f"{Fore.YELLOW}Notification permission not granted, metadata features disabled.{Style.RESET_ALL}")
+        return False
     
     def cleanup(self):
         """Release all resources."""
