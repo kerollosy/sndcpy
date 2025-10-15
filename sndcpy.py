@@ -271,6 +271,13 @@ class SndcpyClient:
                 self.logger.info(f"{Fore.GREEN}Notification permission granted!{Style.RESET_ALL}")
                 self.metadata_enabled = True
                 return True
+            
+            if self._is_service_running():
+                # The service will NOT start on its own
+                # This means that the user left the settings without granting permission
+                self.logger.warning(f"{Fore.YELLOW}Service started without notification permission.{Style.RESET_ALL}")
+                break
+
             time.sleep(check_interval)
         
         self.logger.warning(f"{Fore.YELLOW}Notification permission not granted, metadata features disabled.{Style.RESET_ALL}")
