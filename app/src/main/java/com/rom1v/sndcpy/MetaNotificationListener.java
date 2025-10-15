@@ -8,12 +8,15 @@ import android.media.session.MediaSessionManager;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
+import android.view.KeyEvent;
 
 import org.json.JSONObject;
 
 import java.util.List;
 
 public class MetaNotificationListener extends NotificationListenerService {
+
+    private static MediaController activeController = null;
 
     @Override
     public void onListenerConnected() {
@@ -41,6 +44,7 @@ public class MetaNotificationListener extends NotificationListenerService {
 
             if (controllers == null || controllers.isEmpty()) {
                 Log.d("sndcpy-meta", "No active media sessions");
+                activeController = null;
                 return;
             }
 
@@ -57,6 +61,8 @@ public class MetaNotificationListener extends NotificationListenerService {
             if (controller == null) {
                 controller = controllers.get(0); // fallback
             }
+
+            activeController = controller; // Store for playback control
 
             MediaMetadata metadata = controller.getMetadata();
             if (metadata == null) {
@@ -81,6 +87,65 @@ public class MetaNotificationListener extends NotificationListenerService {
             Log.e("sndcpy-meta", "Missing notification access permission", e);
         } catch (Exception e) {
             Log.e("sndcpy-meta", "updatePlayingSongInfo failed", e);
+        }
+    }
+
+    // Playback control methods
+    public static void sendPlayPause() {
+        if (activeController == null) {
+            Log.w("sndcpy-meta", "No active controller for play/pause");
+            return;
+        }
+        try {
+            if (activeController.getPlaybackState() != null &&
+                activeController.getPlaybackState().getState() == android.media.session.PlaybackState.STATE_PLAYING) {
+                activeController.getTransportControls().pause();
+                Log.d("sndcpy-meta", "Sent PAUSE");
+            } else {
+                activeController.getTransportControls().play();
+                Log.d("sndcpy-meta", "Sent PLAY");
+            }
+        } catch (Exception e) {
+            Log.e("sndcpy-meta", "Failed to play/pause", e);
+        }
+    }
+
+    public static void sendNext() {
+        if (activeController == null) {
+            Log.w("sndcpy-meta", "No active controller for next");
+            return;
+        }
+        try {
+            activeController.getTransportControls().skipToNext();
+            Log.d("sndcpy-meta", "Sent NEXT");
+        } catch (Exception e) {
+            Log.e("sndcpy-meta", "Failed to skip next", e);
+        }
+    }
+
+    public static void sendPrevious() {
+        if (activeController == null) {
+            Log.w("sndcpy-meta", "No active controller for previous");
+            return;
+        }
+        try {
+            activeController.getTransportControls().skipToPrevious();
+            Log.d("sndcpy-meta", "Sent PREVIOUS");
+        } catch (Exception e) {
+            Log.e("sndcpy-meta", "Failed to skip previous", e);
+        }
+    }
+
+    public static void sendStop() {
+        if (activeController == null) {
+            Log.w("sndcpy-meta", "No active controller for stop");
+            return;
+        }
+        try {
+            activeController.getTransportControls().stop();
+            Log.d("sndcpy-meta", "Sent STOP");
+        } catch (Exception e) {
+            Log.e("sndcpy-meta", "Failed to stop", e);
         }
     }
 }

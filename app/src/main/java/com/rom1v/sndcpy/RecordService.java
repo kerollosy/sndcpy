@@ -91,25 +91,25 @@ public class RecordService extends Service {
                         Log.i("sndcpy-meta", "Opening metadata socket on port 28201");
                         LocalServerSocket metaServer = new LocalServerSocket(SOCKET_NAME_META);
                         try (LocalSocket metaSocket = metaServer.accept()) {
-                            // store the output stream for other components to write metadata
-                            Log.i("sndcpy-meta", "Metadata socket listening: " + metaSocket);
-                            MetadataWriter.setOutput(metaSocket.getOutputStream());
                             Log.i("sndcpy-meta", "Metadata socket accepted connection!");
-//                            MetadataWriter.setOutput(metaSocket.getOutputStream());
-                            // keep this thread alive until the socket closes
-                            // read from the socket input to detect when the client disconnects
-                            byte[] tmp = new byte[1];
-                            while (metaSocket.getInputStream().read(tmp) != -1) {
-                                // ignore input; this is only to detect disconnect
+                            MetadataWriter.setOutput(metaSocket.getOutputStream());
+
+                            // Read commands from client
+                            java.io.BufferedReader reader = new java.io.BufferedReader(
+                                    new java.io.InputStreamReader(metaSocket.getInputStream())
+                            );
+
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                Log.d("sndcpy-meta", "Received command: " + line);
+                                handleCommand(line.trim());
                             }
                         } finally {
                             MetadataWriter.clearOutput();
-                            // close server socket
                             Log.i("sndcpy-meta", "Metadata socket disconnected");
                             try { metaServer.close(); } catch (IOException ignored) {}
                         }
                     } catch (IOException e) {
-                        // ignore failures - metadata will be unavailable
                         Log.w("sndcpy-meta", "Metadata socket error", e);
                     }
                 }
@@ -257,5 +257,24 @@ public class RecordService extends Service {
 
     public static void sendMetadata(String json) {
         MetadataWriter.send(json);
+    }
+
+    private void handleCommand(String command) {
+        switch (command) {
+            case "PLAY_PAUSE":
+                MetaNotificationListener.sendPlayPause();
+                break;
+            case "NEXT":
+                MetaNotificationListener.sendNext();
+                break;
+            case "PREVIOUS":
+                MetaNotificationListener.sendPrevious();
+                break;
+            case "STOP":
+                MetaNotificationListener.sendStop();
+                break;
+            default:
+                Log.w("sndcpy-meta", "Unknown command: " + command);
+        }
     }
 }
