@@ -227,27 +227,37 @@ class SndcpyClient:
         return False
 
     def _wait_for_notification_permission(self):
-        """Wait for user to grant notification permission (blocking)."""
+        """Wait for user to grant notification permission and service to start."""
         self.logger.info(f"{Fore.CYAN}Waiting for notification permission (up to 30 seconds)...{Style.RESET_ALL}")
         self.logger.info(f"{Fore.YELLOW}Please grant notification permission on your device when prompted.{Style.RESET_ALL}")
         
+        # Step 1: Wait for permission
         start_time = time.time()
         max_wait_time = 30  # seconds
         check_interval = 2  # seconds between checks
+        permission_granted = False
         
         while time.time() - start_time < max_wait_time:
             if self._check_notification_permission():
                 self.logger.info(f"{Fore.GREEN}Notification permission granted!{Style.RESET_ALL}")
+                permission_granted = True
                 self.metadata_enabled = True
                 break
-            
-            # Wait before checking again
             time.sleep(check_interval)
         
+        if not permission_granted:
+            self.logger.warning(f"{Fore.YELLOW}Notification permission not granted, metadata features disabled.{Style.RESET_ALL}")
+            return False
+        
+        # Step 2: Wait for service to start
+        self.logger.info(f"{Fore.CYAN}Waiting for app service to start...{Style.RESET_ALL}")
+        self.logger.info(f"{Fore.YELLOW}Please return to the app from settings.{Style.RESET_ALL}")
+        
         start_time = time.time()
-        self.logger.info("Waiting for you to close the settings page...")
+        service_started = False
+        
         while time.time() - start_time < max_wait_time:
-            # Check if our app's service is running (means media projection was granted)
+            # Check if our app's service is running
             service_result = subprocess.run(
                 self.adb_cmd + ["shell", "dumpsys", "activity", "services", self.PACKAGE_NAME],
                 capture_output=True,
@@ -255,16 +265,17 @@ class SndcpyClient:
             )
             
             if "RecordService" in service_result.stdout:
-                self.logger.info("{Fore.GREEN}Service detected, continuing...{Style.RESET_ALL}")
+                self.logger.info(f"{Fore.GREEN}Service detected, continuing...{Style.RESET_ALL}")
+                service_started = True
                 break
             
             time.sleep(check_interval)
-        else:
-            self.logger.warning("⚠️ Timeout waiting for settings to close. Continuing anyway...")
         
-        # Permission wasn't granted within the time limit
-        # self.logger.warning(f"{Fore.YELLOW}Notification permission not granted, metadata features disabled.{Style.RESET_ALL}")
-        return False
+        if not service_started:
+            self.logger.error(f"{Fore.RED}App service did not start. Audio streaming may fail.{Style.RESET_ALL}")
+            return False
+            
+        return True
     
     def cleanup(self):
         """Release all resources."""
