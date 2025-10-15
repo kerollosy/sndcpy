@@ -62,6 +62,8 @@ class SndcpyClient:
             device_serial: Optional device serial for multiple devices
             debug: Enable debug logging
         """
+        self.running = True
+
         self.apk_path = apk_path
         self.port = port
         self.device_serial = device_serial
@@ -354,7 +356,7 @@ class SndcpyClient:
         """Listen for metadata updates from device."""
         buffer = b""
         
-        while True:
+        while self.running:
             try:
                 # Use select to check for data with timeout
                 ready = select.select([self.metadata_socket], [], [], 1.0)
@@ -381,11 +383,17 @@ class SndcpyClient:
                 if isinstance(e, BlockingIOError):
                     # No data available, just continue
                     pass
+                elif not self.running:
+                    # We're shutting down, exit gracefully
+                    break
                 else:
                     self.logger.error(f"Metadata socket error: {e}")
                     break
                     
             except Exception as e:
+                if not self.running:
+                    # We're shutting down, exit gracefully
+                    break
                 self.logger.error(f"Metadata listener error: {e}")
                 break
 
@@ -405,15 +413,34 @@ class SndcpyClient:
     def cleanup(self):
         """Release all resources."""
         self.logger.info("Cleaning up resources...")
+        
+        self.running = False
+        time.sleep(0.5)
+        
         if self.audio_stream:
-            self.audio_stream.stop_stream()
-            self.audio_stream.close()
+            try:
+                self.audio_stream.stop_stream()
+                self.audio_stream.close()
+            except:
+                pass
+        
         if self.pyaudio_instance:
-            self.pyaudio_instance.terminate()
+            try:
+                self.pyaudio_instance.terminate()
+            except:
+                pass
+        
         if self.socket:
-            self.socket.close()
+            try:
+                self.socket.close()
+            except:
+                pass
+        
         if self.metadata_socket:
-            self.metadata_socket.close()
+            try:
+                self.metadata_socket.close()
+            except:
+                pass
 
 
 def main():
