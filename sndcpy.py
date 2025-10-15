@@ -13,6 +13,9 @@ import argparse
 import logging
 from pathlib import Path
 from typing import Optional
+import threading
+import json
+import select
 
 import pyaudio
 from colorama import init, Fore, Style
@@ -80,12 +83,15 @@ class SndcpyClient:
         self.pyaudio_instance = None
         self.audio_stream = None
         
+        self.metadata_socket = None
+        self.metadata_thread = None
+        self.metadata_enabled = False
+
         # Build ADB command prefix
         self.adb_cmd = ["adb"]
         if device_serial:
             self.adb_cmd.extend(["-s", device_serial])
         
-        self.metadata_enabled = False
     
     def run(self):
         """Execute the complete streaming workflow."""
@@ -183,6 +189,10 @@ class SndcpyClient:
         try:
             self.socket.connect(("127.0.0.1", self.port))
             self.logger.info("Connected successfully")
+            
+            if self.metadata_enabled:
+                self._setup_metadata_connection()
+                
         except socket.error as e:
             self.logger.error(f"Connection failed: {e}")
             sys.exit(1)
@@ -306,6 +316,91 @@ class SndcpyClient:
         
         self.logger.error(f"{Fore.RED}App service did not start. Aborting.{Style.RESET_ALL}")
         return False
+
+    def _setup_metadata_connection(self):
+        """Setup connection for metadata streaming."""
+        if not self.metadata_enabled:
+            return
+            
+        self.logger.info("Setting up metadata connection...")
+        
+        # Forward metadata port (audio port + 1)
+        metadata_port = self.port + 1
+        
+        self.logger.info(f"Forwarding metadata port {metadata_port}...")
+        subprocess.run(
+            self.adb_cmd + ["forward", f"tcp:{metadata_port}", f"localabstract:sndcpy-meta"],
+            capture_output=True,
+            text=True
+        )
+        
+        # Connect to metadata socket
+        self.metadata_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            self.metadata_socket.connect(("127.0.0.1", metadata_port))
+            self.metadata_socket.setblocking(False)  # Make socket non-blocking
+            self.logger.info("Metadata connection established")
+            
+            # Start metadata listener thread
+            self.metadata_thread = threading.Thread(target=self._metadata_listener)
+            self.metadata_thread.daemon = True
+            self.metadata_thread.start()
+            
+        except socket.error as e:
+            self.logger.error(f"Metadata connection failed: {e}")
+            self.metadata_enabled = False
+
+    def _metadata_listener(self):
+        """Listen for metadata updates from device."""
+        buffer = b""
+        
+        while True:
+            try:
+                # Use select to check for data with timeout
+                ready = select.select([self.metadata_socket], [], [], 1.0)
+                if ready[0]:
+                    data = self.metadata_socket.recv(4096)
+                    if not data:
+                        self.logger.info("Metadata connection closed")
+                        break
+                        
+                    buffer += data
+                    
+                    # Process complete JSON objects from buffer
+                    while b'\n' in buffer:
+                        line, buffer = buffer.split(b'\n', 1)
+                        if line:
+                            try:
+                                metadata = json.loads(line.decode('utf-8'))
+                                self.logger.debug(line.decode('utf-8'))
+                                self._display_metadata(metadata)
+                            except json.JSONDecodeError:
+                                self.logger.debug(f"Invalid metadata JSON: {line}")
+                    
+            except socket.error as e:
+                if isinstance(e, BlockingIOError):
+                    # No data available, just continue
+                    pass
+                else:
+                    self.logger.error(f"Metadata socket error: {e}")
+                    break
+                    
+            except Exception as e:
+                self.logger.error(f"Metadata listener error: {e}")
+                break
+
+    def _display_metadata(self, metadata):
+        """Display metadata."""
+        # Display metadata
+        title = metadata.get('title', 'Unknown')
+        artist = metadata.get('artist', 'Unknown')
+        album = metadata.get('album', '')
+        
+        self.logger.info(f"\n{Fore.CYAN}♫ Now Playing:{Style.RESET_ALL}")
+        self.logger.info(f"{Fore.WHITE}Title: {Fore.CYAN}{title}{Style.RESET_ALL}")
+        self.logger.info(f"{Fore.WHITE}Artist: {Fore.CYAN}{artist}{Style.RESET_ALL}")
+        if album:
+            self.logger.info(f"{Fore.WHITE}Album: {Fore.CYAN}{album}{Style.RESET_ALL}")
     
     def cleanup(self):
         """Release all resources."""
@@ -317,6 +412,8 @@ class SndcpyClient:
             self.pyaudio_instance.terminate()
         if self.socket:
             self.socket.close()
+        if self.metadata_socket:
+            self.metadata_socket.close()
 
 
 def main():
