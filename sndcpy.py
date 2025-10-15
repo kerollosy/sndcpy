@@ -88,6 +88,7 @@ class SndcpyClient:
         self.metadata_socket = None
         self.metadata_thread = None
         self.metadata_enabled = False
+        self.last_metadata = None
 
         # Build ADB command prefix
         self.adb_cmd = ["adb"]
@@ -398,7 +399,18 @@ class SndcpyClient:
                 break
 
     def _display_metadata(self, metadata):
-        """Display metadata."""
+        """Display metadata only if it has changed."""
+        # Skip if this is identical to our last metadata
+        if self.last_metadata is not None:
+            if (self.last_metadata.get('title') == metadata.get('title') and
+                self.last_metadata.get('artist') == metadata.get('artist') and
+                self.last_metadata.get('album') == metadata.get('album')):
+                # Same metadata, don't display again
+                return
+        
+        # Store current metadata as last seen
+        self.last_metadata = metadata.copy()
+        
         # Display metadata
         title = metadata.get('title', 'Unknown')
         artist = metadata.get('artist', 'Unknown')
@@ -416,7 +428,7 @@ class SndcpyClient:
         
         self.running = False
         time.sleep(0.5)
-        
+
         if self.audio_stream:
             try:
                 self.audio_stream.stop_stream()
