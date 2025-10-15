@@ -38,6 +38,7 @@ public class RecordService extends Service {
     private static final int MSG_CONNECTION_ESTABLISHED = 1;
 
     private static final String SOCKET_NAME = "sndcpy";
+    private static final String SOCKET_NAME_META  = "sndcpy-meta";
 
 
     private static final int SAMPLE_RATE = 48000;
@@ -83,7 +84,38 @@ public class RecordService extends Service {
         mediaProjectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
         mediaProjection = mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, data);
         if (mediaProjection != null) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Log.i("sndcpy-meta", "Opening metadata socket on port 28201");
+                        LocalServerSocket metaServer = new LocalServerSocket(SOCKET_NAME_META);
+                        try (LocalSocket metaSocket = metaServer.accept()) {
+                            // store the output stream for other components to write metadata
+                            Log.i("sndcpy-meta", "Metadata socket listening: " + metaSocket);
+                            MetadataWriter.setOutput(metaSocket.getOutputStream());
+                            Log.i("sndcpy-meta", "Metadata socket accepted connection!");
+//                            MetadataWriter.setOutput(metaSocket.getOutputStream());
+                            // keep this thread alive until the socket closes
+                            // read from the socket input to detect when the client disconnects
+                            byte[] tmp = new byte[1];
+                            while (metaSocket.getInputStream().read(tmp) != -1) {
+                                // ignore input; this is only to detect disconnect
+                            }
+                        } finally {
+                            MetadataWriter.clearOutput();
+                            // close server socket
+                            Log.i("sndcpy-meta", "Metadata socket disconnected");
+                            try { metaServer.close(); } catch (IOException ignored) {}
+                        }
+                    } catch (IOException e) {
+                        // ignore failures - metadata will be unavailable
+                        Log.w("sndcpy-meta", "Metadata socket error", e);
+                    }
+                }
+            }).start();
             startRecording();
+            // android.util.Log.i("sndcpy", "RecordService is alive and streaming audio");
         } else {
             Log.w(TAG, "Failed to capture audio");
             stopSelf();
@@ -189,6 +221,7 @@ public class RecordService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        MetadataWriter.clearOutput();
         stopForeground(true);
         if (recorderThread != null) {
             recorderThread.interrupt();
@@ -220,5 +253,9 @@ public class RecordService extends Service {
                 service.getNotificationManager().notify(NOTIFICATION_ID, notification);
             }
         }
+    }
+
+    public static void sendMetadata(String json) {
+        MetadataWriter.send(json);
     }
 }
