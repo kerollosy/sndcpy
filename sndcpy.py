@@ -168,7 +168,12 @@ class SndcpyClient:
             self.logger.info(f"{Fore.GREEN}Notification permission already granted{Style.RESET_ALL}")
             self.metadata_enabled = True
         else:
-            self._wait_for_notification_permission()
+            self.logger.info(f"{Fore.CYAN}Waiting for notification permission (up to 30 seconds)...{Style.RESET_ALL}")
+            self._wait_for_permission_grant()
+            self.logger.info(f"{Fore.YELLOW}Please return to the app from settings.{Style.RESET_ALL}")
+
+        if not self._wait_for_service_start():
+            sys.exit(1)
     
     def _connect(self):
         """Connect to the audio stream."""
@@ -246,18 +251,6 @@ class SndcpyClient:
         
         return "RecordService" in result.stdout
 
-    def _wait_for_notification_permission(self):
-        """Wait for user to grant notification permission and service to start."""
-        self.logger.info(f"{Fore.CYAN}Waiting for notification permission (up to 30 seconds)...{Style.RESET_ALL}")
-        
-        if not self._wait_for_permission_grant():
-            return False
-        
-        if not self._wait_for_service_start():
-            return False
-        
-        return True
-
     def _wait_for_permission_grant(self, timeout: int = 30, check_interval: int = 2) -> bool:
         """
         Wait for user to grant notification permission.
@@ -295,7 +288,6 @@ class SndcpyClient:
             True if service started, False if timeout
         """
         self.logger.info(f"{Fore.CYAN}Waiting for app service to start...{Style.RESET_ALL}")
-        self.logger.info(f"{Fore.YELLOW}Please return to the app from settings.{Style.RESET_ALL}")
         
         start_time = time.time()
         
@@ -305,7 +297,7 @@ class SndcpyClient:
                 return True
             time.sleep(check_interval)
         
-        self.logger.error(f"{Fore.RED}App service did not start. Audio streaming may fail.{Style.RESET_ALL}")
+        self.logger.error(f"{Fore.RED}App service did not start. Aborting.{Style.RESET_ALL}")
         return False
     
     def cleanup(self):
