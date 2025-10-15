@@ -10,20 +10,16 @@ import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionManager;
 import android.os.Bundle;
 import android.util.Log;
-import android.os.Handler;
 
 public class MainActivity extends Activity {
 
     private static final String TAG = "SndcpyMainActivity";
     private static final int REQUEST_CODE_PERMISSION_AUDIO = 1;
     private static final int REQUEST_CODE_START_CAPTURE = 2;
-    private static final int REQUEST_CODE_NOTIFICATION_ACCESS = 3;
 
     private boolean notificationAccessChecked = false;
     private boolean waitingForNotificationPermission = false;
     private boolean hasLeftActivity = false;
-    private Handler timeoutHandler = new Handler();
-    private Runnable timeoutRunnable;
 
     private boolean hasNotificationAccess() {
         String enabled = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
@@ -47,7 +43,7 @@ public class MainActivity extends Activity {
         Log.d(TAG, "onCreate() - notificationAccessChecked: " + notificationAccessChecked);
         Log.d(TAG, "onCreate() - waitingForNotificationPermission: " + waitingForNotificationPermission);
 
-        // Check audio permission first
+        // 1. Check audio permission first
         boolean hasAudioPermission = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
         Log.d(TAG, "onCreate() - hasAudioPermission: " + hasAudioPermission);
 
@@ -67,24 +63,6 @@ public class MainActivity extends Activity {
             notificationAccessChecked = true;
             waitingForNotificationPermission = true;
 
-            // Set up a timeout in case user never comes back
-            timeoutRunnable = new Runnable() {
-                @Override
-                public void run() {
-                    Log.d(TAG, "Timeout waiting for notification permission");
-                    if (waitingForNotificationPermission && !isFinishing()) {
-                        // User didn't come back, proceed without notification permission
-                        Toast.makeText(MainActivity.this,
-                                "Continuing without notification access. Metadata features will be unavailable.",
-                                Toast.LENGTH_LONG).show();
-                        waitingForNotificationPermission = false;
-                        hasLeftActivity = false;
-                        startCaptureIntent();
-                    }
-                }
-            };
-            timeoutHandler.postDelayed(timeoutRunnable, 30000); // 30 second timeout
-
             Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
             startActivity(intent);
             return;
@@ -102,10 +80,6 @@ public class MainActivity extends Activity {
 
         // Only check if we were waiting for permission AND the user has actually left the activity
         if (waitingForNotificationPermission && hasLeftActivity) {
-            // Cancel the timeout since user came back
-            if (timeoutRunnable != null) {
-                timeoutHandler.removeCallbacks(timeoutRunnable);
-            }
 
             waitingForNotificationPermission = false;
             hasLeftActivity = false;
@@ -179,10 +153,5 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         Log.d(TAG, "onDestroy() called");
-
-        // Clean up timeout handler
-        if (timeoutRunnable != null) {
-            timeoutHandler.removeCallbacks(timeoutRunnable);
-        }
     }
 }
