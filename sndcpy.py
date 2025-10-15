@@ -239,13 +239,31 @@ class SndcpyClient:
             if self._check_notification_permission():
                 self.logger.info(f"{Fore.GREEN}Notification permission granted!{Style.RESET_ALL}")
                 self.metadata_enabled = True
-                return True
+                break
             
             # Wait before checking again
             time.sleep(check_interval)
         
+        start_time = time.time()
+        self.logger.info("Waiting for you to close the settings page...")
+        while time.time() - start_time < max_wait_time:
+            # Check if our app's service is running (means media projection was granted)
+            service_result = subprocess.run(
+                self.adb_cmd + ["shell", "dumpsys", "activity", "services", self.PACKAGE_NAME],
+                capture_output=True,
+                text=True
+            )
+            
+            if "RecordService" in service_result.stdout:
+                self.logger.info("{Fore.GREEN}Service detected, continuing...{Style.RESET_ALL}")
+                break
+            
+            time.sleep(check_interval)
+        else:
+            self.logger.warning("⚠️ Timeout waiting for settings to close. Continuing anyway...")
+        
         # Permission wasn't granted within the time limit
-        self.logger.warning(f"{Fore.YELLOW}Notification permission not granted, metadata features disabled.{Style.RESET_ALL}")
+        # self.logger.warning(f"{Fore.YELLOW}Notification permission not granted, metadata features disabled.{Style.RESET_ALL}")
         return False
     
     def cleanup(self):
