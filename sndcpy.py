@@ -221,7 +221,6 @@ class SndcpyClient:
                     self.send_command("PREVIOUS")
                 elif key == keyboard.Key.esc:
                     self.send_command("STOP")
-                    self.running = False
             except:
                 pass
         
