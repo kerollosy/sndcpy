@@ -17,6 +17,7 @@ import threading
 import json
 import select
 
+from pynput import keyboard
 import pyaudio
 from colorama import init, Fore, Style
 
@@ -209,6 +210,25 @@ class SndcpyClient:
             rate=self.SAMPLE_RATE,
             output=True
         )
+
+        def on_press(key):
+            try:
+                if key == keyboard.Key.space:
+                    self.send_command("PLAY_PAUSE")
+                elif key == keyboard.Key.right:
+                    self.send_command("NEXT")
+                elif key == keyboard.Key.left:
+                    self.send_command("PREVIOUS")
+                elif key == keyboard.Key.esc:
+                    self.send_command("STOP")
+                    self.running = False
+            except:
+                pass
+        
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+        
+        print("Playing audio... (Space=Play/Pause, Left=Previous, Right=Next, Esc=Stop)")
         
         self.logger.info("Streaming audio... Press Ctrl+C to stop")
         
@@ -421,6 +441,15 @@ class SndcpyClient:
         self.logger.info(f"{Fore.WHITE}Artist: {Fore.CYAN}{artist}{Style.RESET_ALL}")
         if album:
             self.logger.info(f"{Fore.WHITE}Album: {Fore.CYAN}{album}{Style.RESET_ALL}")
+
+    def send_command(self, command):
+        """Send playback control command"""
+        if self.metadata_socket:
+            try:
+                self.metadata_socket.sendall((command + "\n").encode('utf-8'))
+                print(f"Sent command: {command}")
+            except Exception as e:
+                print(f"Failed to send command: {e}")
     
     def cleanup(self):
         """Release all resources."""
